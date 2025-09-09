@@ -12,12 +12,23 @@ const FILE_NAME = 'jokes.json';
 
 const args = argv.slice(2);
 
+let fileCache = '';
+
+
 const readJsonFile = async (filePath) => {
     try {
+        if (fileCache) {
+            return JSON.parse(fileCache);
+        }
+        
         const data = await fsp.readFile(filePath, 'utf8');
-        return JSON.parse(data);
+        const parsedData = JSON.parse(data);
+        fileCache = data;
+        
+        return parsedData;
     } catch (error) {
         if (error.code === 'ENOENT') {
+            fileCache = '';
             return [];
         }
         throw error;
@@ -27,6 +38,8 @@ const readJsonFile = async (filePath) => {
 const writeJsonFile = async (filePath, value) => {
     const content = JSON.stringify(value);
     await fsp.writeFile(filePath, content, 'utf8');
+    
+    fileCache = '';
 };
 
 const getLeader = (jokes) => {
@@ -41,14 +54,16 @@ const getLeader = (jokes) => {
         return result;
     }, {});
 
-    const [ , top ] = Object.entries(frequencyMap)
+    const mostFrequentJokeEntry = Object.entries(frequencyMap)
         .sort((a, b) => b[1].count - a[1].count)[0] || [];
+    
+    const mostFrequentJoke = mostFrequentJokeEntry[1].joke;
 
-    if (!top) {
+    if (!mostFrequentJoke) {
         console.log('No joke was found');
         return;
     }
-    console.log(top.joke);
+    console.log(mostFrequentJoke);
 };
 
 const getLeaderboard = async () => {
@@ -124,16 +139,83 @@ const fetchJoke = (searchTerm) => {
 };
 
 const search = async () => {
-    const searchTerm = args[1];
-    if (!searchTerm) {
-        console.log('Enter a searchTerm');
-        return;
-    }
     try {
-        const results = await fetchJoke(searchTerm);
-        await showJoke(results);
-    } catch (error) {
-        console.error(error);
+        // Validate search term
+        const searchTerm = args[1];
+        if (!searchTerm) {
+            console.error('❌ Error: Search term is required');
+            console.log('💡 Usage: node dadJokes.js --searchTerm <your_search_term>');
+            console.log('📝 Example: node dadJokes.js --searchTerm cat');
+            return;
+        }
+        
+        if (typeof searchTerm !== 'string') {
+            console.error('❌ Error: Search term must be a string');
+            return;
+        }
+        
+        if (searchTerm.trim().length === 0) {
+            console.error('❌ Error: Search term cannot be empty');
+            return;
+        }
+        
+        if (searchTerm.length > 100) {
+            console.error('❌ Error: Search term is too long (max 100 characters)');
+            return;
+        }
+        
+        console.log(`🔍 Searching for jokes with term: "${searchTerm}"`);
+        
+        // Fetch jokes from API
+        let results;
+        try {
+            results = await fetchJoke(searchTerm);
+        } catch (apiError) {
+            if (apiError.code === 'ENOTFOUND' || apiError.code === 'ECONNREFUSED') {
+                console.error('❌ Network Error: Cannot connect to icanhazdadjoke.com');
+                console.log('💡 Please check your internet connection');
+                return;
+            } else if (apiError.code === 'ETIMEDOUT') {
+                console.error('❌ Timeout Error: Request to icanhazdadjoke.com timed out');
+                console.log('💡 The server might be slow, please try again later');
+                return;
+            } else if (apiError.message.includes('JSON')) {
+                console.error('❌ Data Error: Invalid response from server');
+                console.log('💡 The server returned malformed data');
+                return;
+            } else {
+                console.error('❌ API Error:', apiError.message);
+                console.log('💡 There was a problem fetching jokes from the server');
+                return;
+            }
+        }
+        
+        // Validate API results
+        if (!Array.isArray(results)) {
+            console.error('❌ Data Error: Server returned invalid data format');
+            console.log('💡 Expected array of jokes, got:', typeof results);
+            return;
+        }
+        
+        if (results.length === 0) {
+            console.log(`ℹ️ No jokes found for term: "${searchTerm}"`);
+            console.log('💡 Try a different search term');
+            return;
+        }
+        
+        // Show and save joke
+        try {
+            await showJoke(results);
+        } catch (showError) {
+            console.error('❌ Error displaying joke:', showError.message);
+            console.log('💡 The joke was fetched but could not be displayed');
+            return;
+        }
+        
+    } catch (unexpectedError) {
+        console.error('❌ Unexpected Error in search function:', unexpectedError.message);
+        console.error('📋 Error details:', unexpectedError.stack);
+        console.log('💡 This is an unexpected error, please report it if it persists');
     }
 };
 
